@@ -55,5 +55,9 @@
     </node>
 
   </group>
+<!--   <include ns="as_description" file="$(find as_description)/launch/display_as.launch"></include> -->
+<!--     <param name="robot_description" -->
+<!--            command="$(find xacro)/xacro.py '$(find as_description)/urdf/base/as_base.macro.xacro'"/> -->
+    <!-- Other configurations -->
 
 </launch>
