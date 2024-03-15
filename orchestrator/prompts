@@ -1,0 +1,9 @@
+I want a pyqt widget that shows a live video captured through opencv on /dev/video2
+
+The widget is resizable and the video is accordingly rescaled in it but preserving the aspect ratio.
+
+On the right of the video is a small checkable button that says "zoom". When enabled, the size of the video display does not change but the view is not scaled anymore but cropped.
+
+The cropped offset is changed by doing dragging operations inside the image.
+
+Call this widget VideoView and write a program to demonstrate it.

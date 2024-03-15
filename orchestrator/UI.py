@@ -28,47 +28,57 @@ class VideoPlayer(QWidget):
         self.timer = QTimer(self)
         self.timer.timeout.connect(self.updateFrame)
         self.timer.start(30)  # Update interval in ms
-        self.arm = XArmAPI("192.168.1.212")
-        self.arm.motion_enable(enable=True)
-        self.arm.set_mode(5)
-        self.arm.set_state(state=0)
-        self.arm.reset(wait=True)
+        # self.arm = XArmAPI("192.168.1.212")
+        # self.arm.motion_enable(enable=True)
+        # self.arm.set_mode(5)
+        # self.arm.set_state(state=0)
+        # self.arm.reset(wait=True)
 
     def initUI(self):
-        self.gridLayout = QGridLayout()
+        # Root vertical layout
+        rootVLayout = QVBoxLayout()
 
-        # Video Labels
+        # Video Labels with larger size
         self.videoLabel32 = QLabel(self)
         self.videoLabel33 = QLabel(self)
         self.videoLabel2 = QLabel(self)
 
-        # Set a minimum size for the video display areas
-        self.videoLabel32.setMinimumSize(QSize(400, 300))  # Adjust these values as needed
-        self.videoLabel33.setMinimumSize(QSize(400, 300))  # Adjust these values as needed
-        self.videoLabel2.setMinimumSize(QSize(400, 300))   # Adjust these values as needed
+        # Set a larger minimum size for the video display areas
+        # self.videoLabel32.setMinimumSize(QSize(800, 600))
+        # self.videoLabel33.setMinimumSize(QSize(800, 600))
+        # self.videoLabel2.setMinimumSize(QSize(800, 600))
 
-        # Add video labels to the grid layout
-        self.gridLayout.addWidget(self.videoLabel33, 0, 1)
-        self.gridLayout.addWidget(self.videoLabel32, 1, 1)
-        self.gridLayout.addWidget(self.videoLabel2, 2, 1)
 
-        # Control Buttons for video32
+        # Horizontal layouts for buttons
+        hLayoutX = QHBoxLayout()
         self.btnMinusX = QPushButton("-X")
         self.btnPlusX = QPushButton("+X")
-        self.gridLayout.addWidget(self.btnMinusX, 0, 2)  # Left of video32
-        self.gridLayout.addWidget(self.btnPlusX, 0, 0)  # Right of video32
+        hLayoutX.addWidget(self.btnMinusX)
+        hLayoutX.addWidget(self.btnPlusX)
 
-        # Control Buttons for video33
+        hLayoutY = QHBoxLayout()
         self.btnMinusY = QPushButton("-Y")
         self.btnPlusY = QPushButton("+Y")
-        self.gridLayout.addWidget(self.btnMinusY, 1, 0)  # Left of video33
-        self.gridLayout.addWidget(self.btnPlusY, 1, 2)  # Right of video33
+        hLayoutY.addWidget(self.btnMinusY)
+        hLayoutY.addWidget(self.btnPlusY)
 
-        # Control Buttons for Z controls, placed vertically somewhere (e.g., next to video2)
+        rootVLayout.addWidget(self.videoLabel33)
+        rootVLayout.addLayout(hLayoutX)
+        rootVLayout.addWidget(self.videoLabel32)
+        rootVLayout.addLayout(hLayoutY)
+        rootVLayout.addWidget(self.videoLabel2)
+
+        # Vertical layout for Z and STOP buttons
+        vLayoutZ = QVBoxLayout()
         self.btnPlusZ = QPushButton("+Z")
         self.btnMinusZ = QPushButton("-Z")
-        self.gridLayout.addWidget(self.btnPlusZ, 2, 0)  # Above video2
-        self.gridLayout.addWidget(self.btnMinusZ, 3, 0)  # Below video2
+        self.btnStop = QPushButton("STOP")
+        vLayoutZ.addWidget(self.btnPlusZ)
+        vLayoutZ.addWidget(self.btnMinusZ)
+        vLayoutZ.addWidget(self.btnStop)
+
+        # Add Z control vertical layout to the root layout
+        rootVLayout.addLayout(vLayoutZ)
 
         # Replace or add these in the addControlButtons method or where you initialize buttons
         self.btnMinusX.pressed.connect(lambda: self.buttonPressedAction((-1, 0, 0)))
@@ -86,16 +96,15 @@ class VideoPlayer(QWidget):
         self.btnMinusZ.pressed.connect(lambda: self.buttonPressedAction((0, 0, -1)))
         self.btnMinusZ.released.connect(lambda: self.buttonReleasedAction((0, 0, -1)))
 
-        self.btnStop = QPushButton("STOP")
-        self.gridLayout.addWidget(self.btnStop, 4, 1)  # Adjust grid position as needed
-        self.btnStop.clicked.connect(self.stopFunction)
-
-        self.setLayout(self.gridLayout)
+        self.setLayout(rootVLayout)
 
     def initCameras(self):
         # Initialize camera captures
-        self.cap32 = cv2.VideoCapture('/dev/video32')
-        self.cap33 = cv2.VideoCapture('/dev/video33')
+        # self.cap32 = cv2.VideoCapture('/dev/video32')
+        # self.cap33 = cv2.VideoCapture('/dev/video33')
+        # self.cap2 = cv2.VideoCapture('/dev/video2')
+        self.cap32 = cv2.VideoCapture('/dev/video0')
+        self.cap33 = cv2.VideoCapture('/dev/video2')
         self.cap2 = cv2.VideoCapture('/dev/video2')
 
     def updateFrame(self):
