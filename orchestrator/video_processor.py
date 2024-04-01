@@ -21,6 +21,7 @@ class ImageViewer(QWidget):
         self.initUI()
 
         self.frameFiles = []
+        self.cap1 = cv2.VideoCapture("/dev/video32")
         self.currentIndex = 0
         self.isPlaying = False
         self.timer = QTimer(self)
@@ -117,20 +118,22 @@ class ImageViewer(QWidget):
         if 0 <= self.currentIndex < len(self.frameFiles):
             framePath = self.frameFiles[self.currentIndex]
             pixmap = QPixmap(framePath)
-            self.currentImage = self.pixmapToCvImage(pixmap)
-            if self.processFrames:
-                self.currentImage = self.process(pixmap)
-            if self.mode == 'video':
-                self.displayImage(self.currentImage)
-            elif self.mode == 'binary':
-                self.displayImage(self.binaryImage)
-            elif self.mode == 'floodfill':
-                self.displayImage(self.floodFillImg)
-            elif self.mode == 'contours':
-                self.displayImage(self.contoursImg)
-
-            # self.imageLabel.setPixmap(pixmap)
             self.frameIndicator.setText(str(self.currentIndex))
+            self.currentImage = self.pixmapToCvImage(pixmap)
+        # ret, self.currentImage = self.cap1.read()
+
+        if self.processFrames:
+            self.currentImage = self.process(self.currentImage)
+        if self.mode == 'video':
+            self.displayImage(self.currentImage)
+        elif self.mode == 'binary':
+            self.displayImage(self.binaryImage)
+        elif self.mode == 'floodfill':
+            self.displayImage(self.floodFillImg)
+        elif self.mode == 'contours':
+            self.displayImage(self.contoursImg)
+
+
 
     def changeDisplayMode(self, mode):
         self.mode = mode
@@ -141,9 +144,9 @@ class ImageViewer(QWidget):
             self.imageLabel.setPixmap(
                 pixmap.scaled(self.imageLabel.width(), self.imageLabel.height(), Qt.KeepAspectRatio))
 
-    def process(self, pixmap):
+    def process(self, image):
         # Convert QPixmap to OpenCV format
-        image = self.pixmapToCvImage(pixmap)
+        # image = self.pixmapToCvImage(pixmap)
         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
 
