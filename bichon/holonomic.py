@@ -8,11 +8,18 @@ def get_joy(joy):
     pygame.event.get()
     vel_forward = joy.get_axis(1)
     vel_side = joy.get_axis(0)
-    rot = joy.get_button(1) - joy.get_button(3)
+    #rot = joy.get_button(1) - joy.get_button(3)
+    rot = joy.get_axis(3)
+    if abs(vel_forward)<0.1:
+        vel_forward=0
+    if abs(vel_side)<0.1:
+        vel_side=0
+    if abs(rot)<0.1:
+        rot=0
     return vel_forward, vel_side, rot
     
 
-def inverse_kinematics(vx, vy, wz, lx=29, ly=29.5, r=8):
+def inverse_kinematics(vx, vy, wz, lx=.29, ly=.295, r=.08):
     wfl = 1/r*(vx-vy-(lx+ly)*wz)
     wfr = 1/r*(vx+vy+(lx+ly)*wz)
     wrl = 1/r*(vx+vy-(lx+ly)*wz)
@@ -24,13 +31,6 @@ def motors_init():
                     'pci-0000:00:14.0-usb-0:7.2:1.0',
                     'pci-0000:00:14.0-usb-0:7.3:1.0',
                     'pci-0000:00:14.0-usb-0:7.1:1.0']
-    
-    
-    front_left = serial_names[1]
-    front_right = serial_names[3]
-    back_left = serial_names[2]
-    back_right = serial_names[0]
-    
     
     # vescs = /dev/serial/by-path/[vesc1, vesc2, vesc3, vesc4]
     p="/dev/serial/by-path/"
@@ -57,7 +57,8 @@ def control_loop(timeout=10):
         try:
             motors = motors_init()
             initialized = True
-        except Exception:
+        except Exception as e:
+            print(repr(e))
             tries+=1
             sleep(1)
     pygame.init()
@@ -68,14 +69,26 @@ def control_loop(timeout=10):
             vel_forward, vel_side, rot = get_joy(joy)
         except Exception:
             vel_forward, vel_side, rot = 0,0,0
-        print(f"{vel_forward:.2f}, {vel_side:.2f}, {rot:.2f}             ")
-        cmds = inverse_kinematics(vel_forward, vel_side, rot)
-        print(f"{cmds[0]:.3f} {cmds[1]:.3f} {cmds[2]:.3f} {cmds[3]:.3f} ")
-        for cmd, motor, invert in zip(cmds, motors, motors_invert):
-            cmd = min(0.1, max(-0.1, cmd*invert))
-            motor.set_duty_cycle(cmd)
-        sleep(0.0)
-        print()
+        # print(f"{vel_forward:.2f}, {vel_side:.2f}, {rot:.2f}             ")
+        try:
+            # Max 0.1 m/s 0.2 rad/sec
+            cmds = inverse_kinematics(vel_forward*0.2, vel_side*0.2, rot*0.2)
+            # print(f"{cmds[0]:.3f} {cmds[1]:.3f} {cmds[2]:.3f} {cmds[3]:.3f} ")
+            for cmd, motor, invert in zip(cmds, motors, motors_invert):
+                cmd = min(0.3, max(-0.3, cmd*invert/20.0))
+                motor.set_duty_cycle(cmd)
+            sleep(0.0)
+            # print()
+        except Exception as e:
+            print(f"Error: {repr(e)}\nTrying to recover")
+            try:
+                for motor in motors:
+                    motor.set_duty_cycle(0)
+                sleep(0.0)
+            except Exception:
+                sleep(0.0)
+                
+            
     for motor in motors:
         motor.set_duty_cycle(0)
 
