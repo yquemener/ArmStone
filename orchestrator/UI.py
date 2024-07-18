@@ -1,7 +1,9 @@
 import sys
+from datetime import datetime
+
 import cv2
 from PyQt5.QtWidgets import QWidget, QApplication, QVBoxLayout, QPushButton, QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
-from PyQt5.QtCore import QThread, pyqtSignal, Qt, QRectF
+from PyQt5.QtCore import QThread, pyqtSignal, Qt, QRectF, QTimer
 from PyQt5.QtGui import QImage, QPixmap, QPainter
 import sys
 import cv2
@@ -14,11 +16,19 @@ import PyQt5
 from xarm.wrapper import XArmAPI
 import numpy as np
 import torch
+from PIL import Image
 
 # Hack to make PyQt and cv2 load simultaneously
 os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = os.fspath(
     Path(PyQt5.__file__).resolve().parent / "Qt5" / "plugins"
 )
+
+DATASET_DIRECTORY="/home/yves/Projects/MUAL/OpenArmVision/visionUI/vhelio_holes"
+
+# TODO: button to rearm when blocking
+
+def make_uid():
+    return datetime.now().strftime("%Y-%m-%d_%H-%M-%S.%f")
 
 
 class VideoThread(QThread):
@@ -28,6 +38,8 @@ class VideoThread(QThread):
         super().__init__()
         self.video_path = video_path
         self.processor = MLImageProcessor()
+        self.do_process = False
+        self.save_next_frame = False
 
     def run(self):
         cap = cv2.VideoCapture(self.video_path)
@@ -40,12 +52,22 @@ class VideoThread(QThread):
                 h, w, ch = rgb_image.shape
                 bytes_per_line = ch * w
                 qt_image = QImage(rgb_image.data, w, h, bytes_per_line, QImage.Format_RGB888)
-                try:
+
+                if self.save_next_frame:
+                    self.save_next_frame = False
+                    fulldir = f"{DATASET_DIRECTORY}/candidates/"
+                    if not os.path.exists(fulldir):
+                        os.mkdir(fulldir)
+                    uid = make_uid()
+                    filename = f"{uid}.jpg"
+                    fullpath = fulldir + "/" + filename
+                    Image.fromarray(rgb_image).save(fullpath)
+
+                if self.do_process:
                     self.processor.process(
                         self.processor.qimageToCvImage(qt_image))
                     qt_image = self.processor.cvImageToQImage(self.processor.rendered_image)
-                except Exception:
-                    pass
+
                 self.change_pixmap_signal.emit(qt_image)
             else:
                 break
@@ -65,9 +87,22 @@ class VideoView(QWidget):
         self.zoom_button.setCheckable(True)
         self.zoom_button.toggled.connect(self.toggle_zoom)
 
+        self.autosave_button = QPushButton("Autosave (1 sec)", self)
+        self.autosave_button.setCheckable(True)
+        self.autosave_button.toggled.connect(self.toggle_autosave)
+
+        self.autosave_timer = QTimer(self)
+        self.autosave_timer.timeout.connect(self.save_next_frame)
+
+        self.do_process_button = QPushButton("Vision")
+        self.do_process_button.setCheckable(True)
+        self.do_process_button.setChecked(False)
+
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.view)
         self.layout.addWidget(self.zoom_button)
+        self.layout.addWidget(self.autosave_button)
+        self.layout.addWidget(self.do_process_button)
         self.setLayout(self.layout)
 
         self.video_item = QGraphicsPixmapItem()
@@ -75,9 +110,16 @@ class VideoView(QWidget):
 
         self.thread = VideoThread(video_path)
         self.thread.change_pixmap_signal.connect(self.update_image)
+        self.do_process_button.pressed.connect(self.set_processing)
         self.thread.start()
 
         self.is_zoomed = False
+
+    def set_processing(self):
+        self.thread.do_process = not self.do_process_button.isChecked()
+
+    def save_next_frame(self):
+        self.thread.save_next_frame=True
 
     def update_image(self, qt_img):
         pixmap = QPixmap.fromImage(qt_img)
@@ -95,100 +137,26 @@ class VideoView(QWidget):
             self.view.setDragMode(QGraphicsView.NoDrag)
             self.view.fitInView(self.video_item, Qt.KeepAspectRatio)
 
+    def toggle_autosave(self, checked):
+        if self.autosave_button.isChecked():
+            self.autosave_timer.start(1000)
+        else:
+            self.autosave_timer.stop()
 
-# class ImageProcessor:
-#     def __init__(self):
-#         pass
-#
-#     def process(self, image):
-#         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-#         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-#
-#         # Enhance contrast if needed (optional)
-#         # gray = cv2.equalizeHist(gray)
-#
-#         # Threshold to find darker areas
-#         _, binary = cv2.threshold(blurred, 80, 255, cv2.THRESH_BINARY)
-#
-#         # Use Flood Fill from a known point to isolate the tool
-#         mask = np.zeros((gray.shape[0] + 2, gray.shape[1] + 2), np.uint8)
-#         tooldetect = binary
-#         cv2.floodFill(tooldetect, mask, (400, 16), 128)
-#         tooldetect = (tooldetect==128).astype(np.uint8)*255
-#
-#         # Find contours and the tool's tip
-#         contours, _ = cv2.findContours(tooldetect, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-#         toolTip = None
-#         for contour in contours:
-#             # Assuming the tool's contour is the largest one
-#             if toolTip is None or cv2.contourArea(contour) > cv2.contourArea(toolTip):
-#                 toolTip = contour
-#
-#         if toolTip is not None:
-#             # Find the tip (bottom point) of the tool
-#             bottomPoint = max(toolTip, key=lambda point: point[0][1])
-#             cv2.circle(image, (bottomPoint[0][0], bottomPoint[0][1]), 5, (0, 0, 255), -1)
-#
-#         # Create a blank image for drawing contours
-#         self.contoursImg = np.zeros_like(image)
-#
-#         # Draw the contours on the blank image
-#         cv2.drawContours(self.contoursImg, contours, -1, (0, 255, 0), 2)  # Drawing in green with a thickness of 2
-#
-#         # Holes finder
-#         _, binary = cv2.threshold(blurred, 30, 255, cv2.THRESH_BINARY)  # Adjust threshold
-#         contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-#
-#         # 3. Shape Analysis
-#         for contour in contours:
-#             if len(contour) >= 5:  # Need at least 5 points to fit ellipse
-#                 ellipse = cv2.fitEllipse(contour)
-#                 area = cv2.contourArea(contour)
-#                 if self.isEllipsoid(ellipse, area):
-#                     cv2.ellipse(image, ellipse, (0, 255, 0), 2)  # Draw ellipse in green
-#
-#                     x1,y1 = int(ellipse[0][0]),int(ellipse[0][1])
-#                     x2, y2 = bottomPoint[0]
-#                     cv2.line(image, [x1, y1], [x2, y1],(255,0,0), 2)
-#                     cv2.line(image, [x2, y2], [x2, y1],(255,0,0), 2)
-#
-#
-#
-#         self.currentImage = image  # The final processed image
-#         self.binaryImage = binary  # After applying the threshold
-#         self.floodFillImg = blurred
-#         self.rendered_image = image
-#
-#     def process_hole(self, image):
-#         # 1. Pre-processing
-#         gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
-#         blurred = cv2.GaussianBlur(gray, (5, 5), 0)
-#
-#         # 2. Blob Detection
-#         _, binary = cv2.threshold(blurred, 30, 255, cv2.THRESH_BINARY_INV)  # Adjust threshold as needed
-#         contours, _ = cv2.findContours(binary, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
-#
-#         # 3. Shape Analysis
-#         for contour in contours:
-#             if len(contour) >= 5:  # Need at least 5 points to fit ellipse
-#                 ellipse = cv2.fitEllipse(contour)
-#                 area = cv2.contourArea(contour)
-#                 if self.isEllipsoid(ellipse, area):
-#                     cv2.ellipse(image, ellipse, (0, 255, 0), 2)  # Draw ellipse in green
-#
-#         return image
-#
-#     def isEllipsoid(self, ellipse, area):
-#         # Implement logic to determine if the contour fits an ellipsoid shape
-#         # This could involve checking the aspect ratio and area of the fitted ellipse
-#         (center, axes, orientation) = ellipse
-#         majoraxis_length = max(axes)
-#         minoraxis_length = min(axes)
-#         aspect_ratio = majoraxis_length / minoraxis_length
-#
-#         # Example criteria, adjust as needed
-#         return aspect_ratio < 2 and 100 < area < 5000  # Example criteria
-#
+    @staticmethod
+    def make_uid():
+        return datetime.now().strftime("%Y-%m-%d_%H-%M-%S.%f")
+
+    def create_candidate(self):
+        fulldir = f"{DATASET_DIRECTORY}/candidates/"
+        if not os.path.exists(fulldir):
+            os.mkdir(fulldir)
+        uid = self.make_uid()
+
+        filename = f"{uid}.jpg"
+        fullpath = fulldir+"/"+filename
+        Image.fromarray(self.capture.current_np).save(fullpath)
+
 #     @staticmethod
 #     def qimageToCvImage(qimage):
 #         qimage = qimage.convertToFormat(QImage.Format.Format_RGB32)
@@ -212,13 +180,15 @@ class VideoView(QWidget):
 #         return QImage(image.data, width, height, bytesPerLine, fmt)
 
 class MLImageProcessor:
-    def __init__(self, model_file='../../../OpenArmVision/yolov5/runs/train/exp166/weights/best.pt'):
-        self.ml_model = torch.hub.load('../../../OpenArmVision/yolov5/', 'custom',
+    def __init__(self, model_file='/home/yves/Projects/MUAL/yolov5/runs/train/exp167/weights/best.pt'):
+        self.ml_model = torch.hub.load('../../yolov5/', 'custom',
                                        path=model_file,
                                        source='local')
-        self.ml_model.conf = 0.05
+        self.ml_model.conf = 0.25
+        pass
 
     def process(self, image):
+        # return image
         current_np = np.array(image)
 
         self.ml_model.eval()
@@ -351,9 +321,6 @@ class MainWidget(QWidget):
         self.arm.set_state(state=0)
         self.arm.reset(wait=True)
         self.arm.disconnect()
-        self.cap32.release()
-        self.cap33.release()
-        self.cap2.release()
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
