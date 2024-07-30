@@ -3,7 +3,7 @@
 Servo myservo;  // create servo object
 int pos = 130;    // variable to store the servo position
 int attached = 0;
-const int SERVO_PIN = 9;
+const int SERVO_PIN = 15;
 
 
 void setup() {
