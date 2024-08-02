@@ -35,6 +35,7 @@ DATASET_DIRECTORY="/home/yves/Projects/HLA/MUAL/OpenArmVision/visionUI/vhelio_ho
 # TODO: clic to select hole
 # TODO: open/close clamp with button
 # TODO: Calibration lines
+# TODO: boxes and cross should be scene element not pixel-drawn on image
 
 def make_uid():
     return datetime.now().strftime("%Y-%m-%d_%H-%M-%S.%f")
@@ -52,8 +53,8 @@ class VideoThread(QThread):
 
     def run(self):
         cap = cv2.VideoCapture(self.video_path)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 800)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 600)
         while cap.isOpened():
             ret, frame = cap.read()
             if ret:
@@ -216,6 +217,7 @@ class MLImageProcessor:
         self.click_pos = None
 
     def process(self, image):
+        PIXEL_DIST_MAX_FROM_TARGET = 150
         # return image
         current_np = np.array(image)
 
@@ -231,12 +233,12 @@ class MLImageProcessor:
             cy = int((arr[1] + arr[3]) / 2)
             if arr[5]==0.0:
                 color = (0,255,0)
-                image = cv2.line(image, (cx-2, cy), (cx+2, cy), color, 1)
-                image = cv2.line(image, (cx, cy-2), (cx, cy+2), color, 1)
+                image = cv2.line(image, (cx-2, cy), (cx+2, cy), color, 2)
+                image = cv2.line(image, (cx, cy-2), (cx, cy+2), color, 2)
                 tips.append([arr[4], cx,cy])
             else:
                 color = (255, 0, 0)
-                image = cv2.rectangle(image, (int(arr[0]), int(arr[1]), int(arr[2]-arr[0]), int(arr[3]-arr[1])), color, 1)
+                image = cv2.rectangle(image, (int(arr[0]), int(arr[1]), int(arr[2]-arr[0]), int(arr[3]-arr[1])), color, 2)
                 holes.append([arr[4], cx,cy])
 
         # Process tip
@@ -253,7 +255,7 @@ class MLImageProcessor:
                 closest_tip = sorted(dists)[0][1]
                 self.tip_pos_history.append(closest_tip)
         if len(self.tip_pos_history) > 0:
-            self.tip = np.average(self.tip_pos_history[-10:], axis=0)
+            self.tip = np.average(self.tip_pos_history[-5:], axis=0)
 
         # Process closest hole
         if self.click_pos is None:
@@ -265,9 +267,12 @@ class MLImageProcessor:
             for hole in holes:
                 dx = abs(hole[1] - target[0])
                 dy = abs(hole[2] - target[1])
-                dists.append(((dx**2+dy**2), hole[1], hole[2]))
-            closest_hole = list(sorted(dists))[0][1:]
-            self.closest_hole_history.append(closest_hole)
+                d2 = (dx**2+dy**2)
+                if d2<PIXEL_DIST_MAX_FROM_TARGET**2:
+                    dists.append((d2, hole[1], hole[2]))
+            if len(dists)>0:
+                closest_hole = list(sorted(dists))[0][1:]
+                self.closest_hole_history.append(closest_hole)
         if len(self.closest_hole_history)>0:
             self.closest_hole = np.average(self.closest_hole_history[-10:], axis=0)
         # Display tip
@@ -402,7 +407,7 @@ class MainWidget(QWidget):
         self.timerServoing.timeout.connect(self.servoing)
 
     def servoing(self):
-        speed = 0.1
+        speed = 0.2
         if time.time()-self.servoingStartTime > 4:
             self.timerServoing.stop()
             self.servoingEnable = [0,0,0]
