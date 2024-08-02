@@ -32,6 +32,9 @@ DATASET_DIRECTORY="/home/yves/Projects/HLA/MUAL/OpenArmVision/visionUI/vhelio_ho
 # TODO: Arm IP not hardcoded
 # TODO: (remote?) controls for camera focus and 50Hz
 # TODO: bugfix double model loading
+# TODO: clic to select hole
+# TODO: open/close clamp with button
+# TODO: Calibration lines
 
 def make_uid():
     return datetime.now().strftime("%Y-%m-%d_%H-%M-%S.%f")
@@ -49,8 +52,8 @@ class VideoThread(QThread):
 
     def run(self):
         cap = cv2.VideoCapture(self.video_path)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)
         while cap.isOpened():
             ret, frame = cap.read()
             if ret:
@@ -120,6 +123,8 @@ class VideoView(QWidget):
         self.thread = VideoThread(video_path)
         self.thread.change_pixmap_signal.connect(self.update_image)
         self.do_process_button.pressed.connect(self.set_processing)
+        # self.scene.mousePressEvent.connect()
+        self.view.mousePressEvent = self.video_onclick
         self.thread.start()
 
         self.is_zoomed = False
@@ -168,6 +173,12 @@ class VideoView(QWidget):
         fullpath = fulldir+"/"+filename
         Image.fromarray(self.capture.current_np).save(fullpath)
 
+    def video_onclick(self, event):
+        p = self.view.mapToScene(event.pos())
+        print(p.x(), p.y())
+        self.thread.processor.click_pos = (p.x(), p.y())
+
+
 #     @staticmethod
 #     def qimageToCvImage(qimage):
 #         qimage = qimage.convertToFormat(QImage.Format.Format_RGB32)
@@ -191,7 +202,7 @@ class VideoView(QWidget):
 #         return QImage(image.data, width, height, bytesPerLine, fmt)
 
 class MLImageProcessor:
-    def __init__(self, model_file='/home/yves/Projects/HLA/MUAL/OpenArmVision/visionUI/thirdparty/yolov5/runs/train/exp164/weights/best.pt'):
+    def __init__(self, model_file='/home/yves/Projects/HLA/MUAL/OpenArmVision/visionUI/thirdparty/yolov5/runs/train/exp168/weights/best.pt'):
         self.ml_model = torch.hub.load('/home/yves/Projects/HLA/MUAL/OpenArmVision/visionUI/thirdparty/yolov5/', 'custom',
                                        path=model_file,
                                        source='local')
@@ -202,6 +213,7 @@ class MLImageProcessor:
         self.tip = (0,0)
         self.closest_hole = (0,0)
         self.delta = (0, 0)
+        self.click_pos = None
 
     def process(self, image):
         # return image
@@ -244,11 +256,15 @@ class MLImageProcessor:
             self.tip = np.average(self.tip_pos_history[-10:], axis=0)
 
         # Process closest hole
+        if self.click_pos is None:
+            target = self.tip
+        else:
+            target = self.click_pos
         if len(holes) > 0:
             dists = list()
             for hole in holes:
-                dx = abs(hole[1] - self.tip[0])
-                dy = abs(hole[2] - self.tip[1])
+                dx = abs(hole[1] - target[0])
+                dy = abs(hole[2] - target[1])
                 dists.append(((dx**2+dy**2), hole[1], hole[2]))
             closest_hole = list(sorted(dists))[0][1:]
             self.closest_hole_history.append(closest_hole)
@@ -345,8 +361,8 @@ class MainWidget(QWidget):
         v2buttons = QHBoxLayout()
         self.btnMinusY = QPushButton("-Y")
         self.btnPlusY = QPushButton("+Y")
-        v2buttons.addWidget(self.btnMinusY)
         v2buttons.addWidget(self.btnPlusY)
+        v2buttons.addWidget(self.btnMinusY)
         v2Layout.addLayout(v2buttons)
         videoLayout.addLayout(v2Layout)
 
