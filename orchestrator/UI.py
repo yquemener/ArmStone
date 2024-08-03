@@ -1,4 +1,6 @@
+import subprocess
 import sys
+import serial
 import time
 from datetime import datetime
 
@@ -27,6 +29,11 @@ os.environ["QT_QPA_PLATFORM_PLUGIN_PATH"] = os.fspath(
 
 DATASET_DIRECTORY="/home/yves/Projects/HLA/MUAL/OpenArmVision/visionUI/vhelio_holes"
 
+# Conceptuel
+# TODO: correction de disto pour descendre droit même à coté de l'image
+# TODO: reconnaissance de la qualité de tracking et algo de compensation/recherche?
+
+# Implementation
 # TODO: button to rearm when blocking
 # TODO: less path hardcoded
 # TODO: Arm IP not hardcoded
@@ -50,11 +57,21 @@ class VideoThread(QThread):
         self.processor = MLImageProcessor()
         self.do_process = False
         self.save_next_frame = False
+        self.show_calib_lines = False
+
+    def exposure(self, delta):
+        subprocess.run(f"v4l2-ctl --device {self.video_path} --set-ctrl auto_exposure=1".split(" "))
+        exp = subprocess.check_output(f"v4l2-ctl --device {self.video_path} --get-ctrl exposure_time_absolute".split(" "))
+        exp = exp.decode().strip().split(":")[-1].strip()
+        exp = int(exp)+delta
+        subprocess.run(f"v4l2-ctl --device {self.video_path} --set-ctrl exposure_time_absolute={exp}".split(" "))
 
     def run(self):
+        subprocess.run(f"v4l2-ctl --device {self.video_path} --set-ctrl power_line_frequency=1".split(" "))
         cap = cv2.VideoCapture(self.video_path)
-        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 800)
-        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 600)
+        cap.set(cv2.CAP_PROP_FRAME_WIDTH, 1280)
+        cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 960)
+        time.sleep(1)
         while cap.isOpened():
             ret, frame = cap.read()
             if ret:
@@ -65,18 +82,22 @@ class VideoThread(QThread):
 
                 if self.save_next_frame:
                     self.save_next_frame = False
-                    fulldir = f"{DATASET_DIRECTORY}/candidates/"
-                    if not os.path.exists(fulldir):
-                        os.mkdir(fulldir)
-                    uid = make_uid()
-                    filename = f"{uid}.jpg"
-                    fullpath = fulldir + "/" + filename
-                    Image.fromarray(rgb_image).save(fullpath)
+                    self.processor.saveCvFrame(rgb_image)
 
                 if self.do_process:
                     self.processor.process(
                         self.processor.qimageToCvImage(qt_image))
                     qt_image = self.processor.cvImageToQImage(self.processor.rendered_image)
+                if self.show_calib_lines:
+                    img = self.processor.qimageToCvImage(qt_image)
+                    h,w = img.shape[:2]
+                    color1 = (0, 0, 0)
+                    color2 = [255-c for c in color1]
+                    img = cv2.line(img, (w // 2, 0), (w // 2, h), color1, 1 )
+                    img = cv2.line(img, (w // 2+1, 0), (w // 2+1, h), color2, 1)
+                    img = cv2.line(img, (0, h//2), (w, h//2), color1, 1)
+                    img = cv2.line(img, (0, h // 2+1), (w, h // 2+1), color2, 1)
+                    qt_image = self.processor.cvImageToQImage(img)
 
                 self.change_pixmap_signal.emit(qt_image)
             else:
@@ -97,6 +118,14 @@ class VideoView(QWidget):
         self.zoom_button.setCheckable(True)
         self.zoom_button.toggled.connect(self.toggle_zoom)
 
+        self.calib_button = QPushButton("Calib lines", self)
+        self.calib_button.setCheckable(True)
+        self.calib_button.toggled.connect(self.toggle_calib_lines)
+
+        hbuttons = QHBoxLayout()
+        hbuttons.addWidget(self.zoom_button)
+        hbuttons.addWidget(self.calib_button)
+
         self.autosave_button = QPushButton("Autosave (1 sec)", self)
         self.autosave_button.setCheckable(True)
         self.autosave_button.toggled.connect(self.toggle_autosave)
@@ -113,7 +142,7 @@ class VideoView(QWidget):
         self.layout = QVBoxLayout()
         self.layout.addWidget(self.view)
         self.layout.addWidget(self.log_view)
-        self.layout.addWidget(self.zoom_button)
+        self.layout.addLayout(hbuttons)
         self.layout.addWidget(self.autosave_button)
         self.layout.addWidget(self.do_process_button)
         self.setLayout(self.layout)
@@ -130,6 +159,9 @@ class VideoView(QWidget):
 
         self.is_zoomed = False
 
+    def toggle_calib_lines(self):
+        self.thread.show_calib_lines = self.calib_button.isChecked()
+
     def set_processing(self):
         self.thread.do_process = not self.do_process_button.isChecked()
 
@@ -142,7 +174,8 @@ class VideoView(QWidget):
         if not self.zoom_button.isChecked():
             self.view.fitInView(self.video_item, Qt.KeepAspectRatio)
         delta = self.thread.processor.delta
-        self.log_view.setText(f"dx = {delta[0]:.2f}\ndz = {delta[1]:.2f}")
+        qual = self.thread.processor.tip_quality
+        self.log_view.setText(f"dx = {delta[0]:.2f}\ndz = {delta[1]:.2f}\ntip quality = {qual:.3f}")
 
     def toggle_zoom(self, checked):
         if checked:
@@ -163,16 +196,6 @@ class VideoView(QWidget):
     @staticmethod
     def make_uid():
         return datetime.now().strftime("%Y-%m-%d_%H-%M-%S.%f")
-
-    def create_candidate(self):
-        fulldir = f"{DATASET_DIRECTORY}/candidates/"
-        if not os.path.exists(fulldir):
-            os.mkdir(fulldir)
-        uid = self.make_uid()
-
-        filename = f"{uid}.jpg"
-        fullpath = fulldir+"/"+filename
-        Image.fromarray(self.capture.current_np).save(fullpath)
 
     def video_onclick(self, event):
         p = self.view.mapToScene(event.pos())
@@ -212,6 +235,7 @@ class MLImageProcessor:
         self.holes_history = list()
         self.closest_hole_history = list()
         self.tip = (0,0)
+        self.tip_quality=1.0
         self.closest_hole = (0,0)
         self.delta = (0, 0)
         self.click_pos = None
@@ -246,14 +270,18 @@ class MLImageProcessor:
             if len(self.tip_pos_history) == 0:
                 tips = list(reversed(sorted(tips)))
                 self.tip_pos_history.append(tips[0][1:])
+                self.tip_quality = tips[0][0]
             else:
                 dists = list()
                 for tip in tips:
                     dx = abs(tip[1] - self.tip[0])
                     dy = abs(tip[2] - self.tip[1])
-                    dists.append(((dx ** 2 + dy ** 2), tip[1:]))
+                    dists.append(((dx ** 2 + dy ** 2), tip[1:], tip[0]))
                 closest_tip = sorted(dists)[0][1]
+                self.tip_quality = sorted(dists)[0][-1]
                 self.tip_pos_history.append(closest_tip)
+        else:
+            self.tip_quality = 0
         if len(self.tip_pos_history) > 0:
             self.tip = np.average(self.tip_pos_history[-5:], axis=0)
 
@@ -316,6 +344,15 @@ class MLImageProcessor:
         bytesPerLine = channel * width
         return QImage(image.data, width, height, bytesPerLine, fmt)
 
+    def saveCvFrame(self, frame):
+        fulldir = f"{DATASET_DIRECTORY}/candidates/"
+        if not os.path.exists(fulldir):
+            os.mkdir(fulldir)
+        uid = make_uid()
+        filename = f"{uid}.jpg"
+        fullpath = fulldir + "/" + filename
+        Image.fromarray(frame).save(fullpath)
+
 
 class MainWidget(QWidget):
     def __init__(self):
@@ -372,15 +409,29 @@ class MainWidget(QWidget):
         videoLayout.addLayout(v2Layout)
 
         zButLayout = QVBoxLayout()
+        self.btnExposurePlus = QPushButton("Exp +")
+        self.btnExposureMinus = QPushButton("Exp -")
+        self.btnGripperOpen = QPushButton("G Open")
+        self.btnGripperClose = QPushButton("G Close")
         self.btnPlusZ = QPushButton("+Z")
         self.btnMinusZ = QPushButton("-Z")
         self.btnStop = QPushButton("STOP")
+        zButLayout.addWidget(self.btnExposurePlus)
+        zButLayout.addWidget(self.btnExposureMinus)
+        zButLayout.addWidget(self.btnGripperOpen)
+        zButLayout.addWidget(self.btnGripperClose)
+        zButLayout.addWidget(self.btnPlusZ)
         zButLayout.addWidget(self.btnPlusZ)
         zButLayout.addWidget(self.btnMinusZ)
         zButLayout.addWidget(self.btnStop)
         videoLayout.addLayout(zButLayout)
 
         self.layout.addLayout(videoLayout)
+
+        self.btnExposurePlus.pressed.connect(lambda: self.exposure(10))
+        self.btnExposureMinus.pressed.connect(lambda: self.exposure(-10))
+        self.btnGripperOpen.pressed.connect(lambda: self.grip(110))
+        self.btnGripperClose.pressed.connect(lambda: self.grip(160))
 
         self.btnMinusX.pressed.connect(lambda: self.buttonPressedAction((-1, 0, 0)))
         self.btnMinusX.released.connect(lambda: self.buttonReleasedAction((-1, 0, 0)))
@@ -405,6 +456,27 @@ class MainWidget(QWidget):
         self.timerServoing.setInterval(100)
         self.servoingStartTime = 0
         self.timerServoing.timeout.connect(self.servoing)
+
+    def exposure(self, delta):
+        self.video_view1.thread.exposure(delta)
+        self.video_view2.thread.exposure(delta)
+        # subprocess.run("v4l2-ctl --device /dev/video2 --set-ctrl auto_exposure=1".split(" "))
+        # exp = subprocess.check_output("v4l2-ctl --device /dev/video2 --get-ctrl exposure_time_absolute".split(" "))
+        # exp = exp.decode().strip().split(":")[-1].strip()
+        # exp = int(exp)+delta
+        # subprocess.run(f"v4l2-ctl --device /dev/video2 --set-ctrl exposure_time_absolute={exp}".split(" "))
+
+    def grip(self, val):
+        ser = serial.Serial('/dev/ttyUSB0', 9600, timeout=10,
+                            parity=serial.PARITY_NONE,
+                            stopbits=serial.STOPBITS_ONE,
+                            bytesize=serial.EIGHTBITS)
+        time.sleep(0.3)
+        ser.write("\n\n\n".encode('utf-8'))
+        cmd = f"111 {val} 222\n"
+        ser.write(cmd.encode('utf-8'))
+        ser.flush()
+        ser.close()
 
     def servoing(self):
         speed = 0.2
